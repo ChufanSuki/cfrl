@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "cfrl"
+version = "0.1.0"
+description = ""
+authors = ["Chufan Chen <chenchufan@zju.edu.cn>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+torch = "^1.12.1"
+numpy = "^1.23.3"
+gym = "^0.26.1"
+wandb = "^0.13.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.source]]
+name = "tsinghua"
+url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/"
+default = true
