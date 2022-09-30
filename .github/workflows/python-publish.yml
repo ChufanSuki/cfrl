@@ -31,3 +31,5 @@ jobs:
       run: poetry install
     - name: View poetry --help
       run: poetry --help
+    - name: build
+      run: poetry build
