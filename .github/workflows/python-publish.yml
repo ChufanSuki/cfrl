@@ -33,3 +33,5 @@ jobs:
       run: poetry --help
     - name: build
       run: poetry build
+    - name: test
+      run: poetry python -m unittest
