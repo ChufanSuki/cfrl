@@ -34,4 +34,4 @@ jobs:
     - name: build
       run: poetry build
     - name: test
-      run: poetry python -m unittest
+      run: poetry run python -m unittest
