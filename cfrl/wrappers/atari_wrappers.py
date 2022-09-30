@@ -292,7 +292,7 @@ def make_atari(env_id, max_frames=30 * 60 * 60):
     # Unwrap TimeLimit wrapper because we use our own time limits
     env = env.env
     if max_frames:
-        env = pfrl.wrappers.ContinuingTimeLimit(env, max_episode_steps=max_frames)
+        env = cfrl.wrappers.ContinuingTimeLimit(env, max_episode_steps=max_frames)
     env = NoopResetEnv(env, noop_max=30)
     env = MaxAndSkipEnv(env, skip=4)
     return env
