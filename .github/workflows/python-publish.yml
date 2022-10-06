@@ -35,3 +35,9 @@ jobs:
       run: poetry build
     - name: test
       run: poetry run python -m unittest
+    - name: setup pypi
+      with:
+        pypi_token: ${{ secrets.PYPI }}
+      run: poetry config pypi-token.pypi pypi_token
+    - name: upload
+      run: poetry publish
