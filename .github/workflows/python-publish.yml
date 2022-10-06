@@ -36,8 +36,8 @@ jobs:
     - name: test
       run: poetry run python -m unittest
     - name: setup pypi
-      with:
+      env:
         pypi_token: ${{ secrets.PYPI }}
-      run: poetry config pypi-token.pypi pypi_token
+      run: poetry config pypi-token.pypi "$pypi_token"
     - name: upload
       run: poetry publish
