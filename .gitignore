@@ -190,4 +190,6 @@ cython_debug/
 
 poetry.lock
 
+wandb/
+runs/
 # End of https://www.toptal.com/developers/gitignore/api/python,visualstudiocode

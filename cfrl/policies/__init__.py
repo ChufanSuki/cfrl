@@ -1,0 +1,1 @@
+from cfrl.policies.softmax_policy import *
