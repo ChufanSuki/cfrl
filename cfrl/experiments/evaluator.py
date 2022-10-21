@@ -72,7 +72,6 @@ def run_evaluation_episodes(
     logger=None,
 ):
     """Run multiple evaluation episodes and return returns.
-
     Args:
         env (Environment): Environment used for evaluation
         agent (Agent): Agent to evaluate.

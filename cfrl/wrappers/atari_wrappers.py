@@ -287,19 +287,23 @@ class FlickerFrame(gym.ObservationWrapper):
 
 def make_atari(env_id, max_frames=30 * 60 * 60):
     env = gym.make(env_id)
-    assert "NoFrameskip" in env.spec.id
+    if 'NoFrameSkip' in env.spec.id:
+        env._max_episode_steps = max_frames * 4
+        env = NoopResetEnv(env, noop_max=30)
+        env = MaxAndSkipEnv(env, skip=4) # TODO: make this configurable
+    else:
+        env._max_episode_steps = max_frames
     assert isinstance(env, gym.wrappers.TimeLimit)
     # Unwrap TimeLimit wrapper because we use our own time limits
-    env = env.env
-    if max_frames:
-        env = cfrl.wrappers.ContinuingTimeLimit(env, max_episode_steps=max_frames)
-    env = NoopResetEnv(env, noop_max=30)
-    env = MaxAndSkipEnv(env, skip=4)
+    # env = env.env
+    # if max_frames:
+    #    env = cfrl.wrappers.ContinuingTimeLimit(env, max_episode_steps=max_frames)
     return env
 
 
 def wrap_deepmind(
     env,
+    max_frames=30 * 60 * 60,
     episode_life=True,
     clip_rewards=True,
     frame_stack=True,
@@ -313,6 +317,7 @@ def wrap_deepmind(
         env = EpisodicLifeEnv(env)
     if fire_reset and "FIRE" in env.unwrapped.get_action_meanings():
         env = FireResetEnv(env)
+    env._max_episode_steps = max_frames
     env = WarpFrame(env, channel_order=channel_order)
     if scale:
         env = ScaledFloatFrame(env)
