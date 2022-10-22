@@ -286,7 +286,7 @@ class FlickerFrame(gym.ObservationWrapper):
 
 
 def make_atari(env_id, max_frames=30 * 60 * 60):
-    env = gym.make(env_id)
+    env = gym.make(env_id, render_mode="human")
     if 'NoFrameSkip' in env.spec.id:
         env._max_episode_steps = max_frames * 4
         env = NoopResetEnv(env, noop_max=30)
