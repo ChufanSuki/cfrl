@@ -1,15 +1,25 @@
+import logging
 from cfrl.wrappers.atari_wrappers import make_atari, wrap_deepmind
 from cfrl.nn.atari import AtariNet, AtariLSTMNet
 import torch
 import time
 import torch.nn.functional as F
 from logging import getLogger
+import logging
 import numpy as np
 from cfrl.optimizers.shared_rmsprop import SharedRMSprop
 from cfrl.optimizers.shared_adam import SharedAdam
 
 def test(rank, args, shared_model):
     logger = getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s : %(message)s')
+    fileHandler = logging.FileHandler(r'{0}{1}_log'.format(args.log_dir, args.env_name), mode='w')
+    fileHandler.setFormatter(formatter)
+    streamHandler = logging.StreamHandler()
+    streamHandler.setFormatter(formatter)
+    logger.addHandler(fileHandler)
+    logger.addHandler(streamHandler)
     torch.manual_seed(args.seed)
     env = wrap_deepmind(make_atari(args.env_name))
     model = AtariNet(env.observation_space.shape[0], env.action_space)
@@ -38,7 +48,8 @@ def test(rank, args, shared_model):
             num_tests += 1
             reward_total_sum += reward_sum
             reward_mean = reward_total_sum / num_tests
-            logger.info("Time {0}, episode reward {1}, episode length {2}, reward mean {3}.".format(
+            logger.info("Process {0}: Time {1}, episode reward {2}, episode length {3}, reward mean {4}.".format(
+                rank,
                 time.strftime("%Hh %Mm %Ss",
                             time.gmtime(time.time() - start_time)),
                 reward_sum, episode_length, reward_mean
@@ -59,24 +70,28 @@ def ensure_shared_grads(model, shared_model):
 
 
 def train(rank, args, shared_model, optimizer):
+    logger = getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s : %(message)s')
+    fileHandler = logging.FileHandler(r'{0}{1}_log'.format(args.log_dir, args.env_name), mode='w')
+    fileHandler.setFormatter(formatter)
+    streamHandler = logging.StreamHandler()
+    streamHandler.setFormatter(formatter)
+    logger.addHandler(fileHandler)
+    logger.addHandler(streamHandler)
     torch.manual_seed(args.seed + rank)
     env = wrap_deepmind(make_atari(args.env_name))
     model = AtariNet(env.observation_space.shape[0], env.action_space)
-    observation = env.reset()
+    obs = env.reset()
     action = env.action_space.sample()
-    observation, reward, done, info = env.step(action)
-    start_lives = info['ale.lives']
-
-    if optimizer is None:
-        if args.optimizer == 'RMSprop':
-            optimizer = SharedRMSprop(shared_model.parameters(), lr=args.lr)
-        if args.optimizer == 'Adam':
-            optimizer = SharedAdam(shared_model.parameters(), lr=args.lr)
-
+    next_obs, reward, done, info = env.step(action)
+    start_lives = info['lives']
+    assert optimizer is not None
     model.train()
     env.seed(args.seed + rank)
+
     state = env.reset()
-    state = torch.from_numpy(np.asarray(state)).float()
+    # state = torch.from_numpy(np.asarray(state)).float()
     done = True
     lives = start_lives
     episode_length = 0
@@ -85,70 +100,75 @@ def train(rank, args, shared_model, optimizer):
         # Sync with the shared model
         model.load_state_dict(shared_model.state_dict())
 
+        actions = []
         values = []
         log_probs = []
         rewards = []
         entropies = []
 
         for step in range(args.num_steps):
-
+            if not torch.is_tensor(state):
+                state = torch.from_numpy(np.asarray(state)).float()
             value, logit = model(state)
             prob = F.softmax(logit)
             log_prob = F.log_softmax(logit)
-            entropy = -(log_prob * prob).sum(1)
+            entropy = -(log_prob * prob).sum()
             entropies.append(entropy)
 
-            action = prob.multinomial().data
-            log_prob = log_prob.gather(1, Variable(action))
+            action = prob.multinomial(num_samples=1).detach()
+            # log_prob = log_prob.gather(1, action)
 
-            state, reward, done, info = env.step(action.numpy())
+            state, reward, done, info = env.step(action.data)
             done = done or episode_length >= args.max_episode_length
             if args.count_lives:
-                if lives > info['ale.lives']:
+                if lives > info['lives']:
                     done = True
             reward = max(min(reward, 1), -1)
+
+            
+            values.append(value)
+            log_probs.append(log_prob)
+            rewards.append(reward)
+            actions.append(action)
 
             if done:
                 episode_length = 0
                 lives = start_lives
                 state = env.reset()
-
-            state = torch.from_numpy(state).float()
-            values.append(value)
-            log_probs.append(log_prob)
-            rewards.append(reward)
-
-            if done:
                 break
 
-        R = torch.zeros(1, 1)
-        if not done:
-
-            value, _, _ = model((Variable(state.unsqueeze(0)), (hx, cx)))
+        if done:
+            R = 0
+        else:
+            state = torch.from_numpy(np.asarray(state)).float()
+            value, _ = model(state)
             R = value.data
 
-        values.append(Variable(R))
+        R = torch.tensor([R]) # shape: (1,)
+
+        values.append(R)
         policy_loss = 0
         value_loss = 0
-        R = Variable(R)
-        gae = torch.zeros(1, 1)
-        for i in reversed(range(len(rewards))):
+
+        # gae = torch.zeros(1, 1)
+        # logger.info("R:{0}, values:{1}, log_probs:{2}, rewards:{3}".format(R, values, log_probs, reward))
+        for i in reversed(range(len(rewards))): 
             R = args.gamma * R + rewards[i]
             advantage = R - values[i]
-            value_loss = value_loss + 0.5 * advantage.pow(2)
-
+            value_loss = value_loss + advantage.pow(2)
+            policy_loss = policy_loss + log_probs[i][actions[i]] * advantage
             # Generalized Advantage Estimataion
-            delta_t = rewards[i] + args.gamma * \
-                values[i + 1].data - values[i].data
-            gae = gae * args.gamma * args.tau + delta_t
+            # delta_t = rewards[i] + args.gamma * \
+            #     values[i + 1].data - values[i].data
+            # gae = gae * args.gamma * args.tau + delta_t
 
-            policy_loss = policy_loss - \
-                log_probs[i] * Variable(gae) - 0.01 * entropies[i]
+            # policy_loss = policy_loss - \
+            #     log_probs[i] * gae - 0.01 * entropies[i]
 
         optimizer.zero_grad()
-
-        (policy_loss + 0.5 * value_loss).backward()
-        torch.nn.utils.clip_grad_norm(model.parameters(), 40)
+        loss = policy_loss + 0.5 * value_loss
+        loss.backward()
+        # torch.nn.utils.clip_grad_norm(model.parameters(), 40)
 
         ensure_shared_grads(model, shared_model)
         optimizer.step()
