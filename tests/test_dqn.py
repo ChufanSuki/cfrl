@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import gym
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 import torch.optim as optim
 from stable_baselines3.common.atari_wrappers import (
@@ -33,13 +34,13 @@ def parse_args():
                         help="if toggled, cuda will be enabled by default")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, this experiment will be tracked with Weights and Biases")
-    parser.add_argument("--wandb-project-name", type=str, default="cleanRL",
+    parser.add_argument("--wandb-project-name", type=str, default="cfrl",
                         help="the wandb's project name")
     parser.add_argument("--wandb-entity", type=str, default=None,
                         help="the entity (team) of wandb's project")
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="whether to capture videos of the agent performances (check out `videos` folder)")
-    parser.add_argument("--env-id", type=str, default="CartPoleBreakoutNoFrameskip-v4",
+    parser.add_argument("--env-id", type=str, default="BreakoutNoFrameskip-v4",
                         help="the id of the environment")
     # Hyperparameters
     parser.add_argument("--replay-memory-size", type=int, default=1000000,
@@ -64,7 +65,7 @@ def parse_args():
                         help="the ending epsilon for exploration")
     parser.add_argument("--final-exploration-frame", type=int, default=1000000,
                         help="the number of frames over which the initial value of epsilon is linearly annealed to its final value")
-    parser.add_argument("--replay-start-szie", type=int, default=50000,
+    parser.add_argument("--replay-start-size", type=int, default=50000,
                         help="A uniform random  policy is run for this number of frames before learning starts and the resulting experience is used to populate the replay memory")
     parser.add_argument("--noop-max", type=int, default=30,
                         help="maximum number of doing nothing action to be performed by the agent at the start of an episode")
@@ -117,7 +118,7 @@ class QNetwork(nn.Module):
         )
 
     def forward(self, x):
-        return self.network(x)
+        return self.network(x/255)
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
@@ -182,7 +183,7 @@ if __name__ == "__main__":
     for global_step in range(args.total_timesteps):
         # ALGO LOGIC: put action logic here
         epsilon = linear_schedule(
-            args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
+            args.initial_exploration, args.final_exploration, args.final_exploration_frame, global_step)
         if random.random() < epsilon:
             actions = np.array([envs.single_action_space.sample()
                                for _ in range(envs.num_envs)])
@@ -216,8 +217,8 @@ if __name__ == "__main__":
         obs = next_obs
 
         # ALGO LOGIC: training.
-        if global_step > args.replay_start_size and global_step % args.train_frequency == 0:
-            data = rb.sample(args.batch_size)
+        if global_step > args.replay_start_size and global_step % args.update_frequency == 0:
+            data = rb.sample(args.minibatch_size)
             with torch.no_grad():
                 target_max, _ = target_network(
                     data.next_observations).max(dim=1)

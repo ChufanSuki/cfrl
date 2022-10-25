@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cfrl"
-version = "0.1.8"
+version = "0.1.9"
 description = ""
 authors = ["Chufan Chen <chenchufan@zju.edu.cn>"]
 readme = "README.md"
@@ -25,7 +25,7 @@ optional = true
 [tool.poetry.group.atari.dependencies]
 ale-py = "0.7.4"
 AutoROM = {extras = ["accept-rom-license"], version = "^0.4.2"}
-opencv-python = "^4.6.0.66"
+opencv-python = "4.5.5.64"
 
 [build-system]
 requires = ["poetry-core"]
