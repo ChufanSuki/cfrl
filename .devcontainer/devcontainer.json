@@ -1,17 +1,9 @@
 {
     "name": "Python 3",
     "build": {
-        "dockerfile": "Dockerfile",
+        "dockerfile": "../Dockerfile",
         "context": "..",
-        "args": {
-            // Update 'VARIANT' to pick a Python version: 3, 3.10, 3.9, 3.8, 3.7, 3.6
-            // Append -bullseye or -buster to pin to an OS version.
-            // Use -bullseye variants on local on arm64/Apple Silicon.
-            "VARIANT": "3.9-bullseye",
-            // Options
-            "NODE_VERSION": "lts/*",
-            "POETRY_VERSION": "1.2.2"
-        }
+        "args": {}
     },
     // Configure tool-specific properties.
     "customizations": {
@@ -59,7 +51,7 @@
     // 		"onAutoForward": "silent"
     // },
     // Use 'postCreateCommand' to run commands after the container is created.
-    "postCreateCommand": "bash ./.devcontainer/post-install.sh",
+    // "postCreateCommand": "bash ./.devcontainer/post-install.sh",
     // Comment out to connect as root instead. More info: https://aka.ms/vscode-remote/containers/non-root.
     "remoteUser": "vscode",
     "features": {}

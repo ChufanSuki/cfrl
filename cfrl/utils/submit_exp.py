@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser(description='CFRL Experiment Submission')
 # experiment generation
 parser.add_argument('--exp-script', type=str, default="debug.sh",
     help='the file name of this experiment')
-parser.add_argument('--command', type=str, default="poetry run python cleanrl/ppo.py",
+parser.add_argument('--command', type=str, default="poetry run python examples/ppo.py",
     help='the docker command')
 
 # CleanRL specific args
@@ -25,7 +25,7 @@ parser.add_argument('--num-seed', type=int, default=1,
 # experiment submission
 parser.add_argument('--job-queue', type=str, default="m6gd-medium",
     help='the name of the job queue')
-parser.add_argument('--docker-tag', type=str, default="vwxyzjn/cleanrl:latest",
+parser.add_argument('--docker-tag', type=str, default="chufansuki/cfrl:latest",
     help='the name of the docker tag')
 parser.add_argument('--num-vcpu', type=int, default=1,
     help='number of vcpu per experiment')
