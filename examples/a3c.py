@@ -1,31 +1,31 @@
 # -*- coding: utf-8 -*-
-OMP_NUM_THREADS=1 
-import argparse
-from multiprocessing import process
-import os
-import sys
-import time
-import gym
-from distutils.util import strtobool
-import torch
-import torch.optim as optim
-import torch.multiprocessing as mp
-import torch.nn as nn
-import torch.nn.functional as F
-from cfrl.wrappers.atari_wrappers import make_atari, wrap_deepmind
-from cfrl.nn.atari import AtariLSTMNet, AtariNet
-from cfrl.optimizers.shared_rmsprop import SharedRMSprop
-from cfrl.optimizers.shared_adam import SharedAdam
-import wandb
-from logging import getLogger
-import logging
-import numpy as np
 from torch.utils.tensorboard import SummaryWriter
+import numpy as np
+import logging
+from logging import getLogger
+import wandb
+from cfrl.optimizers.shared_adam import SharedAdam
+from cfrl.optimizers.shared_rmsprop import SharedRMSprop
+from cfrl.nn.atari import AtariLSTMNet, AtariNet
+from cfrl.wrappers.atari_wrappers import make_atari, wrap_deepmind
+import torch.nn.functional as F
+import torch.nn as nn
+import torch.multiprocessing as mp
+import torch.optim as optim
+import torch
+from distutils.util import strtobool
+import gym
+import time
+import sys
+import os
+from multiprocessing import process
+import argparse
+OMP_NUM_THREADS = 1
 
 
 parser = argparse.ArgumentParser(description='A3C')
 parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"),
-        help="the name of this experiment")
+                    help="the name of this experiment")
 parser.add_argument('--lr', type=float, default=0.0001, metavar='LR',
                     help='learning rate (default: 0.0001)')
 parser.add_argument('--gamma', type=float, default=0.99, metavar='G',
@@ -59,19 +59,19 @@ parser.add_argument('--save-model-dir', default='trained_models/', metavar='SMD'
 parser.add_argument('--log-dir', default='logs/', metavar='LG',
                     help='folder to save logs')
 parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-        help="if toggled, this experiment will be tracked with Weights and Biases")
+                    help="if toggled, this experiment will be tracked with Weights and Biases")
 parser.add_argument("--wandb-project-name", type=str, default="cfrl",
-    help="the wandb's project name")
+                    help="the wandb's project name")
 parser.add_argument("--wandb-entity", type=str, default=None,
-    help="the entity (team) of wandb's project")
-
+                    help="the entity (team) of wandb's project")
 
 
 def test(rank, args, shared_model):
     logger = getLogger(__name__)
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s : %(message)s')
-    fileHandler = logging.FileHandler(r'{0}{1}_log'.format(args.log_dir, args.env_name), mode='w')
+    fileHandler = logging.FileHandler(
+        r'{0}{1}_log'.format(args.log_dir, args.env_name), mode='w')
     fileHandler.setFormatter(formatter)
     streamHandler = logging.StreamHandler()
     streamHandler.setFormatter(formatter)
@@ -108,7 +108,7 @@ def test(rank, args, shared_model):
             logger.info("Process {0}: Time {1}, episode reward {2}, episode length {3}, reward mean {4}.".format(
                 rank,
                 time.strftime("%Hh %Mm %Ss",
-                            time.gmtime(time.time() - start_time)),
+                              time.gmtime(time.time() - start_time)),
                 reward_sum, episode_length, reward_mean
             ))
             reward_sum = 0
@@ -131,7 +131,8 @@ def train(rank, args, shared_model, optimizer, run, run_name):
     logger = getLogger(__name__)
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s : %(message)s')
-    fileHandler = logging.FileHandler(r'{0}{1}_log'.format(args.log_dir, args.env_name), mode='w')
+    fileHandler = logging.FileHandler(
+        r'{0}{1}_log'.format(args.log_dir, args.env_name), mode='w')
     fileHandler.setFormatter(formatter)
     streamHandler = logging.StreamHandler()
     streamHandler.setFormatter(formatter)
@@ -152,9 +153,6 @@ def train(rank, args, shared_model, optimizer, run, run_name):
     start_lives = info['lives']
     assert optimizer is not None
     model.train()
-    
-    
-
     state = env.reset()
     # state = torch.from_numpy(np.asarray(state)).float()
     done = True
@@ -191,7 +189,7 @@ def train(rank, args, shared_model, optimizer, run, run_name):
                     done = True
             reward = max(min(reward, 1), -1)
             episodic_reward += reward
-            
+
             values.append(value)
             log_probs.append(log_prob)
             rewards.append(reward)
@@ -211,19 +209,19 @@ def train(rank, args, shared_model, optimizer, run, run_name):
             value, _ = model(state)
             R = value.data
 
-        R = torch.tensor([R]) # shape: (1,)
+        R = torch.tensor([R])  # shape: (1,)
 
         values.append(R)
         policy_loss = 0
         value_loss = 0
 
         # gae = torch.zeros(1, 1)
-        # logger.info("R:{0}, values:{1}, log_probs:{2}, rewards:{3}".format(R, values, log_probs, reward))
-        for i in reversed(range(len(rewards))): 
+        for i in reversed(range(len(rewards))):
             R = args.gamma * R + rewards[i]
             advantage = R - values[i]
             value_loss = value_loss + advantage.pow(2)
-            policy_loss = policy_loss + log_probs[i][actions[i]] * advantage
+            policy_loss = policy_loss + \
+                log_probs[i][actions[i]] * advantage - 0.01 * entropies[i]
             # Generalized Advantage Estimataion
             # delta_t = rewards[i] + args.gamma * \
             #     values[i + 1].data - values[i].data
@@ -242,7 +240,6 @@ def train(rank, args, shared_model, optimizer, run, run_name):
         run.log({"loss": loss})
 
 
-
 if __name__ == '__main__':
     args = parser.parse_args()
     run_name = f"{args.env_name}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -257,20 +254,16 @@ if __name__ == '__main__':
             save_code=True,
             group="A3C"
         )
-    # writer = SummaryWriter(f"runs/{run_name}")
-    # writer.add_text(
-    #     "hyperparameters",
-    #     "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    # )
 
     torch.set_default_tensor_type('torch.FloatTensor')
     torch.manual_seed(args.seed)
-    
+
     env = wrap_deepmind(make_atari(args.env_name))
     shared_model = AtariNet(env.observation_space.shape[0], env.action_space)
     wandb.watch(shared_model)
     if args.load:
-        saved_state = torch.load('{0}{1}.dat'.format(args.load_model_dir, args.env_name))
+        saved_state = torch.load('{0}{1}.dat'.format(
+            args.load_model_dir, args.env_name))
         shared_model.load_state_dict(saved_state)
     shared_model.share_memory()
 
