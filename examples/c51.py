@@ -11,13 +11,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 import torch.optim as optim
-from stable_baselines3.common.atari_wrappers import (
-    ClipRewardEnv,
-    EpisodicLifeEnv,
-    FireResetEnv,
-    MaxAndSkipEnv,
-    NoopResetEnv,
-)
 from stable_baselines3.common.buffers import ReplayBuffer
 
 
@@ -40,9 +33,15 @@ def parse_args():
                         help="the entity (team) of wandb's project")
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="whether to capture videos of the agent performances (check out `videos` folder)")
-    parser.add_argument("--env-id", type=str, default="BreakoutNoFrameskip-v4",
+    parser.add_argument("--env-id", type=str, default="CartPole-v1",
                         help="the id of the environment")
     # Hyperparameters
+    parser.add_argument("--v-max", type=float, default=100,
+                        help="the number of atoms")
+    parser.add_argument("--v-min", type=float, default=-100,
+                        help="the number of atoms")
+    parser.add_argument("--n-atoms", type=int, default=101,
+                        help="the number of atoms")
     parser.add_argument("--replay-memory-size", type=int, default=1000000,
                         help="SGD updates are sampled from this number of most recent frames")
     parser.add_argument("--agent-history-length", type=int, default=4,
@@ -84,15 +83,6 @@ def make_env(env_id, seed, idx, capture_video, run_name):
         if capture_video:
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        env = NoopResetEnv(env, noop_max=30)
-        env = MaxAndSkipEnv(env, skip=4)
-        env = EpisodicLifeEnv(env)
-        if "FIRE" in env.unwrapped.get_action_meanings():
-            env = FireResetEnv(env)
-        env = ClipRewardEnv(env)
-        env = gym.wrappers.ResizeObservation(env, (84, 84))
-        env = gym.wrappers.GrayScaleObservation(env)
-        env = gym.wrappers.FrameStack(env, 4)
         env.seed(seed)
         env.action_space.seed(seed)
         env.observation_space.seed(seed)
@@ -102,23 +92,32 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 
 
 class QNetwork(nn.Module):
-    def __init__(self, env):
+    def __init__(self, env, n_atoms=101, v_min=-100, v_max=100):
         super().__init__()
+        self.env = env
+        self.n_atoms = n_atoms
+        self.register_buffer("atoms", torch.linspace(
+            v_min, v_max, steps=n_atoms))
+        self.n = env.single_action_space.n
         self.network = nn.Sequential(
-            nn.Conv2d(4, 32, 8, stride=4),
+            nn.Linear(np.array(env.single_observation_space.shape).prod(), 120),
             nn.ReLU(),
-            nn.Conv2d(32, 64, 4, stride=2),
+            nn.Linear(120, 84),
             nn.ReLU(),
-            nn.Conv2d(64, 64, 3, stride=1),
-            nn.ReLU(),
-            nn.Flatten(),
-            nn.Linear(3136, 512),
-            nn.ReLU(),
-            nn.Linear(512, env.single_action_space.n),
+            nn.Linear(84, self.n * n_atoms),
         )
 
     def forward(self, x):
-        return self.network(x/255)
+        return self.network(x)
+
+    def get_action(self, x, action=None):
+        logits = self.network(x)
+        # probability mass function for each action
+        pmfs = torch.softmax(logits.view(len(x), self.n, self.n_atoms), dim=2)
+        q_values = (pmfs * self.atoms).sum(2)
+        if action is None:
+            action = torch.argmax(q_values, 1)
+        return action, pmfs[torch.arange(len(x)), action]
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
@@ -163,8 +162,10 @@ if __name__ == "__main__":
     assert isinstance(envs.single_action_space,
                       gym.spaces.Discrete), "only discrete action space is supported"
 
-    q_network = QNetwork(envs).to(device)
-    optimizer = optim.RMSprop(q_network.parameters(), lr=args.learning_rate)
+    q_network = QNetwork(envs, n_atoms=args.n_atoms,
+                         v_min=args.v_min, v_max=args.v_max).to(device)
+    optimizer = optim.Adam(q_network.parameters(
+    ), lr=args.learning_rate, eps=0.01 / args.minibatch_size)
     target_network = QNetwork(envs).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
@@ -188,8 +189,8 @@ if __name__ == "__main__":
             actions = np.array([envs.single_action_space.sample()
                                for _ in range(envs.num_envs)])
         else:
-            q_values = q_network(torch.Tensor(obs).to(device))
-            actions = torch.argmax(q_values, dim=1).cpu().numpy()
+            actions, pmf = q_network.get_action(torch.Tensor(obs).to(device))
+            actions = actions.cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, dones, infos = envs.step(actions)
@@ -220,16 +221,34 @@ if __name__ == "__main__":
         if global_step > args.replay_start_size and global_step % args.update_frequency == 0:
             data = rb.sample(args.minibatch_size)
             with torch.no_grad():
-                target_max, _ = target_network(
-                    data.next_observations).max(dim=1)
-                td_target = data.rewards.flatten() + args.gamma * target_max * \
-                    (1 - data.dones.flatten())
-            old_val = q_network(data.observations).gather(
-                1, data.actions).squeeze()
-            loss = F.mse_loss(td_target, old_val)
+                _, next_pmfs = target_network.get_action(
+                    data.next_observations)
+                next_atoms = data.rewards + args.gamma * \
+                    target_network.atoms * (1 - data.dones)
+                # projection
+                delta_z = target_network.atoms[1] - target_network.atoms[0]
+                tz = next_atoms.clamp(args.v_min, args.v_max)
+
+                b = (tz - args.v_min) / delta_z
+                l = b.floor().clamp(0, args.n_atoms - 1)
+                u = b.ceil().clamp(0, args.n_atoms - 1)
+                # (l == u).float() handles the case where bj is exactly an integer
+                # example bj = 1, then the upper ceiling should be uj= 2, and lj= 1
+                d_m_l = (u + (l == u).float() - b) * next_pmfs
+                d_m_u = (b - l) * next_pmfs
+                target_pmfs = torch.zeros_like(next_pmfs)
+                for i in range(target_pmfs.size(0)):
+                    target_pmfs[i].index_add_(0, l[i].long(), d_m_l[i])
+                    target_pmfs[i].index_add_(0, u[i].long(), d_m_u[i])
+
+            _, old_pmfs = q_network.get_action(
+                data.observations, data.actions.flatten())
+            loss = (-(target_pmfs * old_pmfs.clamp(min=1e-5,
+                    max=1 - 1e-5).log()).sum(-1)).mean()
 
             if global_step % 100 == 0:
                 writer.add_scalar("losses/td_loss", loss, global_step)
+                old_val = (old_pmfs * q_network.atoms).sum(1)
                 writer.add_scalar("losses/q_values",
                                   old_val.mean().item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
